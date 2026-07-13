@@ -1,58 +1,6 @@
 import { getUserId, unauthorized } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-
-// Shape the Expo app POSTs when the user taps "Finish Workout".
-interface SetInput {
-  setNumber: number;
-  weight: number;
-  reps: number;
-  completed: boolean;
-}
-
-interface ExerciseInput {
-  exerciseId: string;
-  position: number;
-  sets: SetInput[];
-}
-
-interface WorkoutInput {
-  startedAt: string;
-  finishedAt: string;
-  note: string | null;
-  exercises: ExerciseInput[];
-}
-
-function parseWorkout(body: unknown): WorkoutInput | null {
-  const w = body as WorkoutInput;
-  if (
-    !w ||
-    typeof w.startedAt !== "string" ||
-    Number.isNaN(Date.parse(w.startedAt)) ||
-    typeof w.finishedAt !== "string" ||
-    Number.isNaN(Date.parse(w.finishedAt)) ||
-    (w.note !== null && typeof w.note !== "string") ||
-    !Array.isArray(w.exercises)
-  ) {
-    return null;
-  }
-  for (const e of w.exercises) {
-    if (
-      typeof e?.exerciseId !== "string" ||
-      typeof e?.position !== "number" ||
-      !Array.isArray(e?.sets) ||
-      e.sets.some(
-        (s) =>
-          typeof s?.setNumber !== "number" ||
-          typeof s?.weight !== "number" ||
-          typeof s?.reps !== "number" ||
-          typeof s?.completed !== "boolean",
-      )
-    ) {
-      return null;
-    }
-  }
-  return w;
-}
+import { insertExercises, parseWorkout } from "@/lib/workouts";
 
 /** GET /api/workouts — the user's finished workouts, newest first. */
 export async function GET(request: Request) {
@@ -131,31 +79,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    for (const exercise of workout.exercises) {
-      const { data: exerciseRow, error: exerciseError } = await supabase
-        .from("workout_exercises")
-        .insert({
-          workout_id: workoutRow.id,
-          exercise_id: exercise.exerciseId,
-          position: exercise.position,
-        })
-        .select("id")
-        .single();
-      if (exerciseError) throw new Error(exerciseError.message);
-
-      if (exercise.sets.length > 0) {
-        const { error: setsError } = await supabase.from("workout_sets").insert(
-          exercise.sets.map((set) => ({
-            workout_exercise_id: exerciseRow.id,
-            set_number: set.setNumber,
-            weight: set.weight,
-            reps: set.reps,
-            completed: set.completed,
-          })),
-        );
-        if (setsError) throw new Error(setsError.message);
-      }
-    }
+    await insertExercises(supabase, workoutRow.id, workout.exercises);
   } catch (error) {
     // Don't leave a half-written session behind; cascade removes children.
     await supabase.from("workouts").delete().eq("id", workoutRow.id);
